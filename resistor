@@ -1,0 +1,192 @@
+#!/bin/python3
+
+from sys import argv, stderr
+from dataclasses import dataclass
+from math import log10, floor
+import os
+
+@dataclass
+class ResistorVal:
+    val: int
+    exponent: int
+
+def decode_eia_3digit(code: str) -> ResistorVal | None:
+
+    if not (
+        (len(code) == 3) and
+        (code[0].isdigit()) and
+        (code[1].isdigit() or code[1].upper() == 'R') and
+        (code[2].isdigit())
+    ):
+        return None
+
+    if (code[1].upper() != 'R'):
+        return ResistorVal(
+            val = int(code[0:2]),
+            exponent = int(code[2])
+        )
+    else:
+        return ResistorVal(
+            val = int(code[0] + code[2]),
+            exponent = -1
+        )
+
+def decode_eia_4digit(code: str) -> ResistorVal | None:
+
+    if not (
+        (len(code) == 4) and
+        (code[0].isdigit()) and
+        (code[1].isdigit() or (code[1].upper() == 'R' and code[2].isdigit())) and
+        (code[2].isdigit() or (code[2].upper() == 'R' and code[1].isdigit())) and
+        (code[3].isdigit())
+    ):
+        return None
+
+    if ('R' not in code.upper()):
+        return ResistorVal(
+            val = int(code[0:3]),
+            exponent = int(code[3])
+        )
+    else:
+        if (code[1].upper() == 'R'):
+            assert(code[2].upper() != 'R')
+            return ResistorVal(
+                val = int(code[0] + code[2:]),
+                exponent = -2
+            )
+        elif (code[2].upper() == 'R'):
+            assert(code[1].upper() != 'R')
+            return ResistorVal(
+                val = int(code[0:2] + code[3]),
+                exponent = -1
+            )
+        else: assert(False)
+
+def decode_eia_96(code: str) -> ResistorVal | None:
+
+    if not (
+        (len(code) == 3) and
+        (code[0].isdigit()) and
+        (code[1].isdigit()) and
+        (code[2].upper() in 'ABCDEFHRSXYZ')
+    ):
+        return None
+
+    vals: list[int] = [
+        100, 102, 105, 107, 110, 113, 115, 118, 121, 124, 127, 130, 133, 137, 140, 143, 147, 150, 154, 158, 162, 165, 169, 174, 178, 182, 187, 191, 196, 200, 205, 210, 215, 221, 226, 232, 237, 243, 249, 255, 261, 267, 274, 280, 287, 294, 301, 309, 316, 324, 332, 340, 348, 357, 365, 374, 383, 392, 402, 412, 422, 432, 442, 453, 464, 475, 487, 499, 511, 523, 536, 549, 562, 576, 590, 604, 619, 634, 649, 665, 681, 698, 715, 732, 750, 768, 787, 806, 825, 845, 866, 887, 909, 931, 953, 976, 990, 996, 999,
+    ]
+    assert(len(vals) == 99)
+
+    idx: int = int(code[0:2])
+    if (idx == 0): return None
+    idx -= 1
+    val: int = vals[idx]
+
+    exponent: int
+    match(code[2].upper()):
+        case 'Z': exponent = -3
+        case 'Y': exponent = -2
+        case 'R': exponent = -2
+        case 'X': exponent = -1
+        case 'S': exponent = -1
+        case 'A': exponent = 0
+        case 'B': exponent = 1
+        case 'H': exponent = 1
+        case 'C': exponent = 2
+        case 'D': exponent = 3
+        case 'E': exponent = 4
+        case 'F': exponent = 5
+        case _: return None
+
+    return ResistorVal(val = val, exponent = exponent)
+
+
+# returns the resistance, or None iff the code is invalid
+def decode(code: str) -> ResistorVal | None:
+
+    # pretty sure I've seen resistors marked this way
+    if (code == '0'): return ResistorVal(val = 0, exponent = 0)
+
+    vals: list[ResistorVal | None] = []
+
+    vals.append(decode_eia_3digit(code))
+    vals.append(decode_eia_4digit(code))
+    vals.append(decode_eia_96(code))
+
+    none_count = vals.count(None)
+    if (none_count == len(vals)): return None
+    assert(none_count == len(vals) - 1) # there should be no ambiguity
+
+    for val in vals:
+        if (val is not None):
+            return val
+    assert(False) # unreachable
+
+
+def format_resistor_val(val_in: ResistorVal) -> str:
+
+    if (val_in.val == 0): return '0 Ω'
+
+    exp1: int = floor(log10(val_in.val))
+    exp2: int = val_in.exponent
+
+    actual_exp = exp1 + exp2
+    val_exp1 = actual_exp % 3
+    val_exp2 = actual_exp - val_exp1
+
+    si_prefix: str
+    match (val_exp2):
+        case -9: si_prefix = 'n'
+        case -6: si_prefix = 'u'
+        case -3: si_prefix = 'm'
+        case  0: si_prefix = ''
+        case  3: si_prefix = 'k'
+        case  6: si_prefix = 'M'
+        case  9: si_prefix = 'G'
+        case 12: si_prefix = 'T'
+        case 15: si_prefix = 'P'
+    if (val_exp2 < -9 or val_exp2 > 15):
+        stderr.write('error: unimplemented; why is your resistance so extreme?')
+        exit(1)
+
+    sig: str = str(val_in.val).rstrip('0')
+    decimal_pos: int = val_exp1 + 1
+    if (decimal_pos > len(sig)):
+        sig += '0' * (decimal_pos - len(sig))
+    elif (decimal_pos < len(sig)):
+        sig = sig[0:decimal_pos] + '.' + sig[decimal_pos:]
+        if (sig[0] == '.'): sig = '0' + sig
+
+    return f'{sig} {si_prefix}Ω'
+
+def print_help():
+    basename: str = os.path.basename(argv[0])
+    assert(isinstance(basename, str))
+
+    print(
+f'''Usage:
+    {basename} code1 [code2 code3 ...]
+Example:
+    {basename} 01B 622 0'''
+    )
+
+if __name__ == '__main__':
+
+    if (
+        len(argv) == 1 or
+        (len(argv) > 1 and argv[1] in ['help', '-help', '--help', 'h', '-h', '?', '-?'])
+    ):
+        print_help()
+        exit(0)
+
+    assert(len(argv) > 1)
+    codes: list[str] = argv[1:]
+
+    for code in codes:
+
+        val: ResistorVal | None = decode(code)
+
+        display_str: str = 'invalid' if (val is None) else format_resistor_val(val)
+
+        print(display_str)
+
