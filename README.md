@@ -17,6 +17,13 @@ For convenience, you can pass multiple codes:
 6.2 kΩ
 ```
 
+Invalid codes return "invalid".
+```
+❯ resistor 12345 622
+invalid
+6.2 kΩ
+```
+
 ## Installation
 
 It's just a single-file Python script. Add it to your path however you want (copy to a folder, symlink, whatever).
